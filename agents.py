@@ -859,6 +859,7 @@ class IndexingAgent:
             json.dump(existing_json, f, indent=2)
 
         return {"ok": True, "chunks": len(new_chunks),
+                "chunk_summaries": [c["summary"] for c in new_chunks],
                 "message": f"{len(new_chunks)} chunks indexed for {tax_id}"}
 
 
@@ -897,6 +898,7 @@ class IngestionState(TypedDict):
     tax_id: Optional[str]
     pdf_filename: Optional[str]
     chunks: int
+    chunk_summaries: List[str]
 
     # Bookkeeping for the UI / CLI
     node: Optional[str]                        # last node that ran
@@ -983,6 +985,7 @@ def indexing_node(state: IngestionState) -> dict:
     return {
         "node": "indexing",
         "chunks": result.get("chunks", 0),
+        "chunk_summaries": result.get("chunk_summaries", []),
         "log": [f"Indexing Agent: {result['message']}"],
     }
 
@@ -1035,7 +1038,7 @@ class TMFOrchestrator:
             "uploaded_file": uploaded_file, "url": url, "inbox_path": inbox_path,
             "pdf_bytes": None, "original_filename": None,
             "metadata": {}, "full_text": "", "tax_id": None, "pdf_filename": None,
-            "chunks": 0, "node": None, "outcome": None, "log": [],
+            "chunks": 0, "chunk_summaries": [], "node": None, "outcome": None, "log": [],
         }
         for state in self.graph.stream(initial_state, stream_mode="values"):
             yield state

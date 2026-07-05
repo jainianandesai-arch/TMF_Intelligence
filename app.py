@@ -1793,6 +1793,19 @@ elif module == "🕸️ Live Ingestion Demo":
                     _dc4.metric("Resolved Study ID", _state.get("tax_id") or "—")
                 if _state.get("chunks"):
                     st.info(f"Chunks indexed: {_state['chunks']}")
+                    _summaries = _state.get("chunk_summaries") or []
+                    if _summaries:
+                        with st.expander(f"Chunk details ({len(_summaries)})", expanded=True):
+                            _chunk_rows = [
+                                {"Chunk #": _i + 1, "Summary": _s}
+                                for _i, _s in enumerate(_summaries)
+                            ]
+                            st.dataframe(
+                                pd.DataFrame(_chunk_rows),
+                                use_container_width=True,
+                                hide_index=True,
+                                height=min(400, 70 + len(_chunk_rows) * 35),
+                            )
                 with st.expander("Pipeline log", expanded=True):
                     for _line in _state["log"]:
                         st.text(_line)
@@ -1822,6 +1835,7 @@ elif module == "🕸️ Live Ingestion Demo":
                 "tax_id": _final_state.get("tax_id"),
                 "pdf_filename": _final_state.get("pdf_filename"),
                 "chunks": _final_state.get("chunks"),
+                "chunk_summaries": _final_state.get("chunk_summaries"),
                 "metadata": _final_state.get("metadata"),
                 "full_text_length": len(_final_state.get("full_text") or ""),
                 "log": _final_state.get("log"),
