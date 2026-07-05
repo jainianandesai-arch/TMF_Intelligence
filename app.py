@@ -1771,12 +1771,17 @@ elif module == "🕸️ Live Ingestion Demo":
     _render_steps(None, None)
 
     if _run_clicked and _uploaded is not None:
+        import time as _time
         _orchestrator = TMFOrchestrator()
         _final_state = None
 
         for _state in _orchestrator.run(uploaded_file=_uploaded):
             _final_state = _state
             _render_steps(_state.get("node"), _state.get("outcome"))
+            # Deliberate pause so each node is visibly perceivable — the graph
+            # itself runs fast enough that back-to-back states would otherwise
+            # flash by unseen even though every node genuinely executes.
+            _time.sleep(0.7)
 
             with _detail_placeholder.container():
                 _meta = _state.get("metadata") or {}
