@@ -1,0 +1,29 @@
+# API keys / secrets
+**/.env
+
+# Clinical data — never push
+data/pdfs/**/*.pdf
+data/pdfs/*.pdf
+data/chroma_db/
+data/trial_index.json
+
+# Exports — exclude folder except the one structural file the spec requires
+data/exports/*
+!data/exports/eTMF_Status_Report.xlsx
+
+# Generated files
+logs/*.log
+__pycache__/
+*.pyc
+
+# Staging folders
+TMF_Ingestion_Agent/files/
+TMF_Ingestion_Agent/inbox/*.pdf
+
+# Outdated instruction file
+CLAUDE_CODE_INSTRUCTIONS.md
+
+# Personal working files — not part of the deliverable
+New PDFs/
+Presentation/
+Screenshot*.png
