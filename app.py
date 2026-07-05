@@ -1768,7 +1768,65 @@ elif module == "🕸️ Live Ingestion Demo":
   <div style="font-size:0.65rem;opacity:0.85;">{_state_text}</div>
 </div>""", unsafe_allow_html=True)
 
-    _render_steps(None, None)
+    def _render_result_details(_result):
+        with _detail_placeholder.container():
+            _meta = _result.get("metadata") or {}
+            if _meta:
+                _dc1, _dc2, _dc3, _dc4 = st.columns(4)
+                _dc1.metric("Drug", _meta.get("drug") or "—")
+                _dc2.metric("Phase", _meta.get("phase") or "—")
+                _dc3.metric("Doc Type", _meta.get("document_type") or "—")
+                _dc4.metric("Resolved Study ID", _result.get("tax_id") or "—")
+            if _result.get("chunks"):
+                st.info(f"Chunks indexed: {_result['chunks']}")
+                _summaries = _result.get("chunk_summaries") or []
+                if _summaries:
+                    with st.expander(f"Chunk details ({len(_summaries)})", expanded=True):
+                        _chunk_rows = [
+                            {"Chunk #": _i + 1, "Summary": _s}
+                            for _i, _s in enumerate(_summaries)
+                        ]
+                        st.dataframe(
+                            pd.DataFrame(_chunk_rows),
+                            use_container_width=True,
+                            hide_index=True,
+                            height=min(400, 70 + len(_chunk_rows) * 35),
+                        )
+            with st.expander("Pipeline log", expanded=True):
+                for _line in _result.get("log") or []:
+                    st.text(_line)
+
+    def _render_outcome_banner(_result):
+        _outcome = _result.get("outcome")
+        st.markdown("<br>", unsafe_allow_html=True)
+        if _outcome == "success":
+            st.success(
+                f"✅ Ingestion succeeded — **{(_result.get('metadata') or {}).get('drug', '?')} "
+                f"({_result.get('tax_id')})** added to the portfolio."
+            )
+        elif _outcome == "duplicate":
+            st.warning(f"⚠ Duplicate — **{_result.get('tax_id')}** is already indexed. No changes made.")
+        elif _outcome == "unregistered":
+            st.error(
+                "🚨 Unregistered — no matching Study ID found in the eTMF registry. File quarantined to "
+                "`data/pdfs/unregistered/`. This demonstrates the conditional-edge quarantine branch: the "
+                "graph ended at the **Registry** node instead of continuing to Indexing/Sync."
+            )
+        else:
+            st.error("❌ Pipeline failed — see the log above for details.")
+
+        with st.expander("Full final state (for inspection)"):
+            st.json({
+                "node": _result.get("node"),
+                "outcome": _result.get("outcome"),
+                "tax_id": _result.get("tax_id"),
+                "pdf_filename": _result.get("pdf_filename"),
+                "chunks": _result.get("chunks"),
+                "chunk_summaries": _result.get("chunk_summaries"),
+                "metadata": _result.get("metadata"),
+                "full_text_length": _result.get("full_text_length"),
+                "log": _result.get("log"),
+            })
 
     if _run_clicked and _uploaded is not None:
         import time as _time
@@ -1782,33 +1840,7 @@ elif module == "🕸️ Live Ingestion Demo":
             # itself runs fast enough that back-to-back states would otherwise
             # flash by unseen even though every node genuinely executes.
             _time.sleep(0.7)
-
-            with _detail_placeholder.container():
-                _meta = _state.get("metadata") or {}
-                if _meta:
-                    _dc1, _dc2, _dc3, _dc4 = st.columns(4)
-                    _dc1.metric("Drug", _meta.get("drug") or "—")
-                    _dc2.metric("Phase", _meta.get("phase") or "—")
-                    _dc3.metric("Doc Type", _meta.get("document_type") or "—")
-                    _dc4.metric("Resolved Study ID", _state.get("tax_id") or "—")
-                if _state.get("chunks"):
-                    st.info(f"Chunks indexed: {_state['chunks']}")
-                    _summaries = _state.get("chunk_summaries") or []
-                    if _summaries:
-                        with st.expander(f"Chunk details ({len(_summaries)})", expanded=True):
-                            _chunk_rows = [
-                                {"Chunk #": _i + 1, "Summary": _s}
-                                for _i, _s in enumerate(_summaries)
-                            ]
-                            st.dataframe(
-                                pd.DataFrame(_chunk_rows),
-                                use_container_width=True,
-                                hide_index=True,
-                                height=min(400, 70 + len(_chunk_rows) * 35),
-                            )
-                with st.expander("Pipeline log", expanded=True):
-                    for _line in _state["log"]:
-                        st.text(_line)
+            _render_result_details(_state)
 
             # Indexing (chunking + Claude summaries + OpenAI embeddings, per
             # chunk) is genuinely slow — the graph only yields its next state
@@ -1820,26 +1852,8 @@ elif module == "🕸️ Live Ingestion Demo":
                 with _detail_placeholder.container():
                     st.info("📚 Chunking document, writing summaries, and generating embeddings — this can take a minute or two for longer protocols.")
 
-        _outcome = _final_state.get("outcome") if _final_state else None
-        st.markdown("<br>", unsafe_allow_html=True)
-        if _outcome == "success":
-            st.success(
-                f"✅ Ingestion succeeded — **{_final_state['metadata'].get('drug', '?')} "
-                f"({_final_state.get('tax_id')})** added to the portfolio."
-            )
-        elif _outcome == "duplicate":
-            st.warning(f"⚠ Duplicate — **{_final_state.get('tax_id')}** is already indexed. No changes made.")
-        elif _outcome == "unregistered":
-            st.error(
-                "🚨 Unregistered — no matching Study ID found in the eTMF registry. File quarantined to "
-                "`data/pdfs/unregistered/`. This demonstrates the conditional-edge quarantine branch: the "
-                "graph ended at the **Registry** node instead of continuing to Indexing/Sync."
-            )
-        else:
-            st.error("❌ Pipeline failed — see the log above for details.")
-
-        with st.expander("Full final state (for inspection)"):
-            st.json({
+        if _final_state:
+            _result = {
                 "node": _final_state.get("node"),
                 "outcome": _final_state.get("outcome"),
                 "tax_id": _final_state.get("tax_id"),
@@ -1849,4 +1863,20 @@ elif module == "🕸️ Live Ingestion Demo":
                 "metadata": _final_state.get("metadata"),
                 "full_text_length": len(_final_state.get("full_text") or ""),
                 "log": _final_state.get("log"),
-            })
+            }
+            # Persist so this result survives a rerun (e.g. navigating away and
+            # back, or any stray widget interaction) instead of vanishing —
+            # the underlying ingestion already happened for real either way,
+            # but the visual proof of it shouldn't be this fragile.
+            st.session_state["live_demo_last_result"] = _result
+            _render_outcome_banner(_result)
+
+    elif st.session_state.get("live_demo_last_result"):
+        _result = st.session_state["live_demo_last_result"]
+        st.caption("Showing the result of your last completed run in this session.")
+        _render_steps(_result.get("node"), _result.get("outcome"))
+        _render_result_details(_result)
+        _render_outcome_banner(_result)
+
+    else:
+        _render_steps(None, None)
