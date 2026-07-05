@@ -1810,6 +1810,16 @@ elif module == "🕸️ Live Ingestion Demo":
                     for _line in _state["log"]:
                         st.text(_line)
 
+            # Indexing (chunking + Claude summaries + OpenAI embeddings, per
+            # chunk) is genuinely slow — the graph only yields its next state
+            # once that whole node finishes, which would otherwise leave the
+            # screen looking frozen on "Registry" for the entire duration.
+            # Show Indexing as active right away, before that real work starts.
+            if _state.get("node") == "registry" and _state.get("outcome") not in ("duplicate", "unregistered", "failed"):
+                _render_steps("indexing", None)
+                with _detail_placeholder.container():
+                    st.info("📚 Chunking document, writing summaries, and generating embeddings — this can take a minute or two for longer protocols.")
+
         _outcome = _final_state.get("outcome") if _final_state else None
         st.markdown("<br>", unsafe_allow_html=True)
         if _outcome == "success":
