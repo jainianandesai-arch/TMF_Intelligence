@@ -1843,87 +1843,118 @@ elif module == "🕸️ Live Ingestion Demo":
                 "log": _result.get("log"),
             })
 
+    def _build_result(_state):
+        return {
+            "node": _state.get("node"),
+            "outcome": _state.get("outcome"),
+            "tax_id": _state.get("tax_id"),
+            "pdf_filename": _state.get("pdf_filename"),
+            "chunks": _state.get("chunks"),
+            "chunk_summaries": _state.get("chunk_summaries"),
+            "metadata": _state.get("metadata"),
+            "full_text_length": len(_state.get("full_text") or ""),
+            "log": _state.get("log"),
+        }
+
     if _run_clicked and _uploaded is not None:
-        import time as _time
+        # A fresh run always starts its own rerun cycle (see below) rather
+        # than running to completion in this single script execution.
+        st.session_state["live_demo_gen"] = TMFOrchestrator().run(uploaded_file=_uploaded)
+        st.session_state["live_demo_state"] = None
+        st.session_state["live_demo_phase"] = "advance"
+        st.session_state["live_demo_last_result"] = None
+        st.session_state["live_demo_last_error"] = None
+        st.rerun()
+
+    _phase = st.session_state.get("live_demo_phase")
+
+    # Every visual transition below ends in st.rerun() rather than relying on
+    # intra-script placeholder updates to flush to the browser on their own.
+    # On a local dev server, updates made mid-script (inside a loop, before a
+    # later blocking call) do reliably reach the browser — but that's not
+    # guaranteed once the app is behind a hosting proxy under real load: the
+    # script thread can spend a long stretch blocked on real network calls
+    # (indexing makes a Claude + an OpenAI call per chunk), and any updates
+    # queued before that block aren't sent as a real page state until control
+    # returns. st.rerun() sidesteps that entirely — it's Streamlit's own
+    # guaranteed mechanism for committing a render as the actual current page,
+    # so each stage is genuinely delivered instead of hoping it flushes in time.
+    if _phase == "advance":
         import traceback as _traceback
 
+        _state = st.session_state.get("live_demo_state")
+        if _state:
+            _render_steps(_state.get("node"), _state.get("outcome"))
+            _render_result_details(_state)
+        else:
+            _render_steps(None, None)
+
         try:
-            _orchestrator = TMFOrchestrator()
-            _final_state = None
+            _next_state = next(st.session_state["live_demo_gen"])
+            st.session_state["live_demo_state"] = _next_state
+            _node = _next_state.get("node")
+            _stopped = _next_state.get("outcome") in ("duplicate", "unregistered", "failed")
+            if _node == "registry" and not _stopped:
+                st.session_state["live_demo_phase"] = "show_indexing_wait"
+            elif _node == "indexing" and not _stopped:
+                st.session_state["live_demo_phase"] = "show_sync_wait"
+            else:
+                st.session_state["live_demo_phase"] = "advance"
+        except StopIteration:
+            _final_state = st.session_state.get("live_demo_state")
+            if _final_state:
+                st.session_state["live_demo_last_result"] = _build_result(_final_state)
+            st.session_state["live_demo_phase"] = "done"
+            st.session_state.pop("live_demo_gen", None)
+        except Exception:
+            # Anything unhandled -- including exceptions raised by the
+            # LangGraph engine itself rather than by an individual node --
+            # used to crash the script silently, resetting this whole tab
+            # back to blank/pending on the next rerun. Surface it and persist
+            # it so it survives a rerun instead of just vanishing.
+            st.session_state["live_demo_last_error"] = _traceback.format_exc()
+            st.session_state["live_demo_phase"] = "done"
+            st.session_state.pop("live_demo_gen", None)
+        st.rerun()
 
-            for _state in _orchestrator.run(uploaded_file=_uploaded):
-                _final_state = _state
-                _render_steps(_state.get("node"), _state.get("outcome"))
-                # Deliberate pause so each node is visibly perceivable — the graph
-                # itself runs fast enough that back-to-back states would otherwise
-                # flash by unseen even though every node genuinely executes.
-                _time.sleep(0.7)
-                _render_result_details(_state)
+    elif _phase == "show_indexing_wait":
+        # Dedicated rerun cycle whose only job is to show Indexing as active,
+        # with an explanation, BEFORE the next advance actually runs it (that
+        # next call blocks for real — a Claude summary + an OpenAI embedding
+        # per chunk, up to 40 chunks). This guarantees the "now indexing"
+        # state is committed to the browser before the slow work starts.
+        _state = st.session_state.get("live_demo_state")
+        _render_steps("indexing", None)
+        if _state:
+            _render_result_details(_state)
+        with _detail_placeholder.container():
+            st.info("📚 Chunking document, writing summaries, and generating embeddings — this can take a minute or two for longer protocols.")
+        st.session_state["live_demo_phase"] = "advance"
+        st.rerun()
 
-                # Indexing (chunking + Claude summaries + OpenAI embeddings, per
-                # chunk) is genuinely slow — the graph only yields its next state
-                # once that whole node finishes, which would otherwise leave the
-                # screen looking frozen on "Registry" for the entire duration.
-                # Show Indexing as active right away, before that real work starts.
-                if _state.get("node") == "registry" and _state.get("outcome") not in ("duplicate", "unregistered", "failed"):
-                    _render_steps("indexing", None)
-                    with _detail_placeholder.container():
-                        st.info("📚 Chunking document, writing summaries, and generating embeddings — this can take a minute or two for longer protocols.")
+    elif _phase == "show_sync_wait":
+        # sync_node sets node="sync" and outcome="success" in one atomic
+        # return, so without this the UI would jump straight from Indexing
+        # (active) to Sync (already done) in a single render.
+        _state = st.session_state.get("live_demo_state")
+        _render_steps("sync", None)
+        if _state:
+            _render_result_details(_state)
+        with _detail_placeholder.container():
+            st.info("🔄 Clearing the portfolio cache and syncing the dashboard...")
+        st.session_state["live_demo_phase"] = "advance"
+        st.rerun()
 
-                # sync_node sets node="sync" and outcome="success" in the same
-                # atomic return, so the UI would otherwise never see Sync in an
-                # "active" state — it would jump straight from Indexing (active)
-                # to Sync (done) in one render. Show Sync as active first, before
-                # that state arrives, exactly like the Indexing workaround above.
-                if _state.get("node") == "indexing" and _state.get("outcome") not in ("duplicate", "unregistered", "failed"):
-                    _render_steps("sync", None)
-                    with _detail_placeholder.container():
-                        st.info("🔄 Clearing the portfolio cache and syncing the dashboard...")
-        except Exception as _pipeline_exc:
-            # Anything unhandled — including exceptions raised by the LangGraph
-            # engine itself rather than by an individual node function — used to
-            # crash the script silently, which reset this whole tab back to its
-            # default "nothing run yet" state (everything pending) on the next
-            # rerun. Surface it instead, and persist it so it survives a rerun.
-            _tb = _traceback.format_exc()
-            st.session_state["live_demo_last_result"] = None
-            st.session_state["live_demo_last_error"] = _tb
-            st.error(f"❌ Pipeline crashed — {type(_pipeline_exc).__name__}: {_pipeline_exc}")
+    elif _phase == "done":
+        if st.session_state.get("live_demo_last_error"):
+            st.error("❌ The pipeline crashed. Showing the traceback from that attempt:")
             with st.expander("Full traceback (for debugging)", expanded=True):
-                st.code(_tb, language="text")
-            _final_state = None
-
-        if _final_state:
-            _result = {
-                "node": _final_state.get("node"),
-                "outcome": _final_state.get("outcome"),
-                "tax_id": _final_state.get("tax_id"),
-                "pdf_filename": _final_state.get("pdf_filename"),
-                "chunks": _final_state.get("chunks"),
-                "chunk_summaries": _final_state.get("chunk_summaries"),
-                "metadata": _final_state.get("metadata"),
-                "full_text_length": len(_final_state.get("full_text") or ""),
-                "log": _final_state.get("log"),
-            }
-            # Persist so this result survives a rerun (e.g. navigating away and
-            # back, or any stray widget interaction) instead of vanishing —
-            # the underlying ingestion already happened for real either way,
-            # but the visual proof of it shouldn't be this fragile.
-            st.session_state["live_demo_last_result"] = _result
-            st.session_state["live_demo_last_error"] = None
+                st.code(st.session_state["live_demo_last_error"], language="text")
+        elif st.session_state.get("live_demo_last_result"):
+            _result = st.session_state["live_demo_last_result"]
+            _render_steps(_result.get("node"), _result.get("outcome"))
+            _render_result_details(_result)
             _render_outcome_banner(_result)
-
-    elif st.session_state.get("live_demo_last_error"):
-        st.error("❌ The last run crashed. Showing the traceback from that attempt:")
-        with st.expander("Full traceback (for debugging)", expanded=True):
-            st.code(st.session_state["live_demo_last_error"], language="text")
-
-    elif st.session_state.get("live_demo_last_result"):
-        _result = st.session_state["live_demo_last_result"]
-        st.caption("Showing the result of your last completed run in this session.")
-        _render_steps(_result.get("node"), _result.get("outcome"))
-        _render_result_details(_result)
-        _render_outcome_banner(_result)
 
     else:
         _render_steps(None, None)
