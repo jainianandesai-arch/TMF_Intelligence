@@ -1852,6 +1852,16 @@ elif module == "🕸️ Live Ingestion Demo":
                 with _detail_placeholder.container():
                     st.info("📚 Chunking document, writing summaries, and generating embeddings — this can take a minute or two for longer protocols.")
 
+            # sync_node sets node="sync" and outcome="success" in the same
+            # atomic return, so the UI would otherwise never see Sync in an
+            # "active" state — it would jump straight from Indexing (active)
+            # to Sync (done) in one render. Show Sync as active first, before
+            # that state arrives, exactly like the Indexing workaround above.
+            if _state.get("node") == "indexing" and _state.get("outcome") not in ("duplicate", "unregistered", "failed"):
+                _render_steps("sync", None)
+                with _detail_placeholder.container():
+                    st.info("🔄 Clearing the portfolio cache and syncing the dashboard...")
+
         if _final_state:
             _result = {
                 "node": _final_state.get("node"),
