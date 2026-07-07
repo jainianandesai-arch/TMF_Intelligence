@@ -16,10 +16,6 @@ logs/*.log
 __pycache__/
 *.pyc
 
-# Staging folders
-TMF_Ingestion_Agent/files/
-TMF_Ingestion_Agent/inbox/*.pdf
-
 # Outdated instruction file
 CLAUDE_CODE_INSTRUCTIONS.md
 
