@@ -1882,8 +1882,22 @@ elif module == "🕸️ Live Ingestion Demo":
     if _phase == "advance":
         import traceback as _traceback
 
+        # live_demo_display is an explicit override set by the show_*_wait
+        # phases below, naming what should render right now even though the
+        # last *real* state we received is for an earlier node. Without this,
+        # this block would re-render the stale previous state (e.g. still
+        # "registry") immediately before the next() call below -- which is
+        # exactly the call that blocks for real on Indexing's work -- undoing
+        # the correct "Indexing: active" the previous phase just showed and
+        # leaving the browser stuck displaying "Registry" for the whole
+        # duration of the real indexing work instead.
+        _display = st.session_state.get("live_demo_display")
         _state = st.session_state.get("live_demo_state")
-        if _state:
+        if _display:
+            _render_steps(_display[0], _display[1])
+            if _state:
+                _render_result_details(_state)
+        elif _state:
             _render_steps(_state.get("node"), _state.get("outcome"))
             _render_result_details(_state)
         else:
@@ -1892,6 +1906,7 @@ elif module == "🕸️ Live Ingestion Demo":
         try:
             _next_state = next(st.session_state["live_demo_gen"])
             st.session_state["live_demo_state"] = _next_state
+            st.session_state["live_demo_display"] = None
             _node = _next_state.get("node")
             _stopped = _next_state.get("outcome") in ("duplicate", "unregistered", "failed")
             if _node == "registry" and not _stopped:
@@ -1923,6 +1938,10 @@ elif module == "🕸️ Live Ingestion Demo":
         # next call blocks for real — a Claude summary + an OpenAI embedding
         # per chunk, up to 40 chunks). This guarantees the "now indexing"
         # state is committed to the browser before the slow work starts.
+        # live_demo_display persists this choice into the following advance
+        # phase, so its own render (right before the blocking call) shows
+        # "indexing" too, instead of falling back to the stale prior state.
+        st.session_state["live_demo_display"] = ("indexing", None)
         _state = st.session_state.get("live_demo_state")
         _render_steps("indexing", None)
         if _state:
@@ -1935,7 +1954,10 @@ elif module == "🕸️ Live Ingestion Demo":
     elif _phase == "show_sync_wait":
         # sync_node sets node="sync" and outcome="success" in one atomic
         # return, so without this the UI would jump straight from Indexing
-        # (active) to Sync (already done) in a single render.
+        # (active) to Sync (already done) in a single render. Same
+        # live_demo_display handoff as show_indexing_wait above, though sync
+        # itself is fast (no API calls) so this window is brief either way.
+        st.session_state["live_demo_display"] = ("sync", None)
         _state = st.session_state.get("live_demo_state")
         _render_steps("sync", None)
         if _state:
