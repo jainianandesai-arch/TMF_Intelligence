@@ -2,6 +2,21 @@ import streamlit as st
 import anthropic
 from dotenv import load_dotenv
 load_dotenv()
+
+# Streamlit Community Cloud doesn't use .env files — it injects secrets via
+# st.secrets instead. Locally, .env populates os.environ via load_dotenv()
+# above; on Cloud, this bridges st.secrets into os.environ the same way, so
+# every downstream call (OpenAI(), anthropic.Anthropic(), etc.) that reads
+# os.environ directly keeps working unchanged in both environments.
+import os
+for _key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ONET_API_KEY"):
+    if not os.environ.get(_key):
+        try:
+            if _key in st.secrets:
+                os.environ[_key] = st.secrets[_key]
+        except Exception:
+            pass  # no secrets.toml locally — fine, .env already handled it
+
 import pandas as pd
 import json
 import importlib
@@ -1830,37 +1845,53 @@ elif module == "🕸️ Live Ingestion Demo":
 
     if _run_clicked and _uploaded is not None:
         import time as _time
-        _orchestrator = TMFOrchestrator()
-        _final_state = None
+        import traceback as _traceback
 
-        for _state in _orchestrator.run(uploaded_file=_uploaded):
-            _final_state = _state
-            _render_steps(_state.get("node"), _state.get("outcome"))
-            # Deliberate pause so each node is visibly perceivable — the graph
-            # itself runs fast enough that back-to-back states would otherwise
-            # flash by unseen even though every node genuinely executes.
-            _time.sleep(0.7)
-            _render_result_details(_state)
+        try:
+            _orchestrator = TMFOrchestrator()
+            _final_state = None
 
-            # Indexing (chunking + Claude summaries + OpenAI embeddings, per
-            # chunk) is genuinely slow — the graph only yields its next state
-            # once that whole node finishes, which would otherwise leave the
-            # screen looking frozen on "Registry" for the entire duration.
-            # Show Indexing as active right away, before that real work starts.
-            if _state.get("node") == "registry" and _state.get("outcome") not in ("duplicate", "unregistered", "failed"):
-                _render_steps("indexing", None)
-                with _detail_placeholder.container():
-                    st.info("📚 Chunking document, writing summaries, and generating embeddings — this can take a minute or two for longer protocols.")
+            for _state in _orchestrator.run(uploaded_file=_uploaded):
+                _final_state = _state
+                _render_steps(_state.get("node"), _state.get("outcome"))
+                # Deliberate pause so each node is visibly perceivable — the graph
+                # itself runs fast enough that back-to-back states would otherwise
+                # flash by unseen even though every node genuinely executes.
+                _time.sleep(0.7)
+                _render_result_details(_state)
 
-            # sync_node sets node="sync" and outcome="success" in the same
-            # atomic return, so the UI would otherwise never see Sync in an
-            # "active" state — it would jump straight from Indexing (active)
-            # to Sync (done) in one render. Show Sync as active first, before
-            # that state arrives, exactly like the Indexing workaround above.
-            if _state.get("node") == "indexing" and _state.get("outcome") not in ("duplicate", "unregistered", "failed"):
-                _render_steps("sync", None)
-                with _detail_placeholder.container():
-                    st.info("🔄 Clearing the portfolio cache and syncing the dashboard...")
+                # Indexing (chunking + Claude summaries + OpenAI embeddings, per
+                # chunk) is genuinely slow — the graph only yields its next state
+                # once that whole node finishes, which would otherwise leave the
+                # screen looking frozen on "Registry" for the entire duration.
+                # Show Indexing as active right away, before that real work starts.
+                if _state.get("node") == "registry" and _state.get("outcome") not in ("duplicate", "unregistered", "failed"):
+                    _render_steps("indexing", None)
+                    with _detail_placeholder.container():
+                        st.info("📚 Chunking document, writing summaries, and generating embeddings — this can take a minute or two for longer protocols.")
+
+                # sync_node sets node="sync" and outcome="success" in the same
+                # atomic return, so the UI would otherwise never see Sync in an
+                # "active" state — it would jump straight from Indexing (active)
+                # to Sync (done) in one render. Show Sync as active first, before
+                # that state arrives, exactly like the Indexing workaround above.
+                if _state.get("node") == "indexing" and _state.get("outcome") not in ("duplicate", "unregistered", "failed"):
+                    _render_steps("sync", None)
+                    with _detail_placeholder.container():
+                        st.info("🔄 Clearing the portfolio cache and syncing the dashboard...")
+        except Exception as _pipeline_exc:
+            # Anything unhandled — including exceptions raised by the LangGraph
+            # engine itself rather than by an individual node function — used to
+            # crash the script silently, which reset this whole tab back to its
+            # default "nothing run yet" state (everything pending) on the next
+            # rerun. Surface it instead, and persist it so it survives a rerun.
+            _tb = _traceback.format_exc()
+            st.session_state["live_demo_last_result"] = None
+            st.session_state["live_demo_last_error"] = _tb
+            st.error(f"❌ Pipeline crashed — {type(_pipeline_exc).__name__}: {_pipeline_exc}")
+            with st.expander("Full traceback (for debugging)", expanded=True):
+                st.code(_tb, language="text")
+            _final_state = None
 
         if _final_state:
             _result = {
@@ -1879,7 +1910,13 @@ elif module == "🕸️ Live Ingestion Demo":
             # the underlying ingestion already happened for real either way,
             # but the visual proof of it shouldn't be this fragile.
             st.session_state["live_demo_last_result"] = _result
+            st.session_state["live_demo_last_error"] = None
             _render_outcome_banner(_result)
+
+    elif st.session_state.get("live_demo_last_error"):
+        st.error("❌ The last run crashed. Showing the traceback from that attempt:")
+        with st.expander("Full traceback (for debugging)", expanded=True):
+            st.code(st.session_state["live_demo_last_error"], language="text")
 
     elif st.session_state.get("live_demo_last_result"):
         _result = st.session_state["live_demo_last_result"]
