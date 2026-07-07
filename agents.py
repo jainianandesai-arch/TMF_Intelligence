@@ -981,7 +981,15 @@ def route_after_registry(state: IngestionState) -> str:
 
 
 def indexing_node(state: IngestionState) -> dict:
-    result = IndexingAgent().run(state["full_text"], state["metadata"])
+    try:
+        result = IndexingAgent().run(state["full_text"], state["metadata"])
+    except Exception as e:
+        # Previously an exception here (e.g. missing OPENAI_API_KEY) crashed
+        # the whole Streamlit run with an unhandled traceback, and the UI
+        # never advanced past Registry. Route it to a clean "failed" outcome
+        # instead, same as upload/metadata/registry already do.
+        return {"node": "indexing", "outcome": "failed",
+                "log": [f"Indexing Agent failed: {e}"]}
     return {
         "node": "indexing",
         "chunks": result.get("chunks", 0),
@@ -1004,6 +1012,10 @@ def sync_node(state: IngestionState) -> dict:
     }
 
 
+def route_after_indexing(state: IngestionState) -> str:
+    return END if state.get("outcome") == "failed" else "sync"
+
+
 def build_ingestion_graph():
     """Build and compile the ingestion pipeline as a LangGraph StateGraph."""
     graph = StateGraph(IngestionState)
@@ -1017,7 +1029,7 @@ def build_ingestion_graph():
     graph.add_conditional_edges("upload", route_after_upload, {"metadata": "metadata", END: END})
     graph.add_conditional_edges("metadata", route_after_metadata, {"registry": "registry", END: END})
     graph.add_conditional_edges("registry", route_after_registry, {"indexing": "indexing", END: END})
-    graph.add_edge("indexing", "sync")
+    graph.add_conditional_edges("indexing", route_after_indexing, {"sync": "sync", END: END})
     graph.add_edge("sync", END)
 
     return graph.compile()
@@ -1042,4 +1054,3 @@ class TMFOrchestrator:
         }
         for state in self.graph.stream(initial_state, stream_mode="values"):
             yield state
-        
